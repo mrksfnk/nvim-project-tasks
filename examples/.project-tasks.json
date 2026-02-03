@@ -1,0 +1,100 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": ".project-tasks.json example configuration",
+  "description": "This file demonstrates how to configure project-tasks.nvim",
+
+  "backends": {
+    "zig": {
+      "markers": ["build.zig"],
+      "tasks": {
+        "build": {
+          "cmd": ["zig", "build"]
+        },
+        "run": {
+          "cmd": ["zig", "build", "run"],
+          "args_passthrough": true
+        },
+        "test": {
+          "cmd": ["zig", "build", "test"]
+        },
+        "package": {
+          "cmd": ["zig", "build", "-Doptimize=ReleaseSafe"]
+        },
+        "clean": {
+          "cmd": ["rm", "-rf", "zig-out", "zig-cache", ".zig-cache"]
+        }
+      },
+      "variables": {
+        "build_dir": "zig-out"
+      }
+    },
+
+    "rust": {
+      "markers": ["Cargo.toml"],
+      "tasks": {
+        "build": {
+          "cmd": ["cargo", "build"]
+        },
+        "run": {
+          "cmd": ["cargo", "run"],
+          "args_passthrough": true
+        },
+        "test": {
+          "cmd": ["cargo", "test"]
+        },
+        "package": {
+          "cmd": ["cargo", "build", "--release"]
+        },
+        "debug": {
+          "cmd": ["cargo", "build"],
+          "use_dap": true,
+          "dap_config": {
+            "type": "codelldb",
+            "request": "launch",
+            "program": "${workspaceFolder}/target/debug/${target}"
+          }
+        },
+        "clean": {
+          "cmd": ["cargo", "clean"]
+        }
+      }
+    },
+
+    "go": {
+      "markers": ["go.mod"],
+      "tasks": {
+        "build": {
+          "cmd": ["go", "build", "./..."]
+        },
+        "run": {
+          "cmd": ["go", "run", "."],
+          "args_passthrough": true
+        },
+        "test": {
+          "cmd": ["go", "test", "./..."]
+        },
+        "clean": {
+          "cmd": ["go", "clean"]
+        }
+      }
+    }
+  },
+
+  "env": {
+    "EXAMPLE_VAR": "value"
+  },
+
+  "variables": {
+    "custom_var": "custom_value"
+  },
+
+  "targets": {
+    "my_app": {
+      "path": "./build/my_app",
+      "args": ["--verbose"],
+      "env": {
+        "DEBUG": "1"
+      }
+    }
+  }
+}

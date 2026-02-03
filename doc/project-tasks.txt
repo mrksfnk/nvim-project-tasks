@@ -1,0 +1,271 @@
+*project-tasks.txt*  Minimal, extensible project task runner for Neovim
+
+Author:  mrksfnk
+License: MIT
+
+==============================================================================
+CONTENTS                                              *project-tasks-contents*
+
+    1. Introduction .......................... |project-tasks-intro|
+    2. Requirements .......................... |project-tasks-requirements|
+    3. Installation .......................... |project-tasks-installation|
+    4. Configuration ......................... |project-tasks-configuration|
+    5. Keymaps ............................... |project-tasks-keymaps|
+    6. Commands .............................. |project-tasks-commands|
+    7. Backends .............................. |project-tasks-backends|
+    8. CMake ................................. |project-tasks-cmake|
+    9. Python/uv ............................. |project-tasks-python|
+    10. Custom Backends ...................... |project-tasks-custom|
+    11. Debug Integration .................... |project-tasks-debug|
+    12. API .................................. |project-tasks-api|
+
+==============================================================================
+1. INTRODUCTION                                          *project-tasks-intro*
+
+project-tasks.nvim is a minimal, extensible project task runner for Neovim.
+Run configure, build, run, debug, test, and package tasks with a unified
+interface.
+
+Features:
+• Data-driven backends — CMake and Python/uv built-in
+• CMakePresets.json — Full support with inheritance resolution
+• CMake File API — Automatic target discovery
+• Async execution — Non-blocking tasks via vim.system()
+• Session memory — Remembers last selected target/preset per project
+• nvim-dap integration — Optional debug adapter support
+
+==============================================================================
+2. REQUIREMENTS                                   *project-tasks-requirements*
+
+• Neovim 0.10+
+• Optional: nvim-dap (https://github.com/mfussenegger/nvim-dap)
+
+==============================================================================
+3. INSTALLATION                                   *project-tasks-installation*
+
+Using lazy.nvim: >lua
+    {
+      "your-username/project-tasks.nvim",
+      config = function()
+        require("project-tasks").setup({
+          -- optional configuration
+        })
+      end,
+    }
+<
+
+==============================================================================
+4. CONFIGURATION                                 *project-tasks-configuration*
+
+                                                        *project-tasks.setup()*
+Call `require("project-tasks").setup(opts)` to initialize the plugin.
+
+Default configuration: >lua
+    require("project-tasks").setup({
+      -- Enable/disable default keymaps
+      keymaps = true,
+
+      -- Keymap prefix (default: "<leader>p")
+      keymap_prefix = "<leader>p",
+
+      -- Output settings
+      terminal = {
+        -- Output mode: "quickfix" (default), "terminal", "terminal_nofocus"
+        mode = "quickfix",
+
+        -- Terminal split settings (for terminal modes)
+        position = "bottom", -- "bottom", "top", "left", "right"
+        size = 15,
+      },
+
+      -- Override or extend backends
+      backends = {},
+    })
+<
+                                                   *project-tasks-output-modes*
+Output Modes ~
+
+    quickfix          Capture output to quickfix list, stay in editor
+    terminal          Split terminal with focus (for interactive commands)
+    terminal_nofocus  Split terminal, cursor stays in editor
+
+                                               *project-tasks-project-config*
+Project Configuration ~
+
+Place a `.project-tasks.json` in your project root to define custom backends,
+override settings, or configure environment variables. See |project-tasks-custom|.
+
+==============================================================================
+5. KEYMAPS                                             *project-tasks-keymaps*
+
+Default keymaps use `<leader>p` as prefix. Uppercase variants force
+re-selection of target/preset.
+
+    Key           Task        Description ~
+    <leader>pc    configure   Configure project
+    <leader>pC    configure   Configure (select preset)
+    <leader>pb    build       Build project
+    <leader>pB    build       Build (select preset)
+    <leader>pr    run         Run target
+    <leader>pR    run         Run (select target)
+    <leader>pd    debug       Debug target
+    <leader>pD    debug       Debug (select target)
+    <leader>pt    test        Run tests
+    <leader>pT    test        Run tests (select preset)
+    <leader>pp    package     Package project
+    <leader>pP    package     Package (select preset)
+    <leader>px    clean       Clean build artifacts
+    <leader>pX    clean       Clean (select preset)
+    <leader>pi    info        Show project info
+
+==============================================================================
+6. COMMANDS                                           *project-tasks-commands*
+
+All commands accept a `!` (bang) to force re-selection.
+
+    :ProjectConfigure[!]      Configure project
+    :ProjectBuild[!]          Build project
+    :ProjectRun[!]            Run target
+    :ProjectDebug[!]          Debug target
+    :ProjectTest[!]           Run tests
+    :ProjectPackage[!]        Package project
+    :ProjectClean[!]          Clean build artifacts
+    :ProjectInfo              Show detected backend and available tasks
+
+==============================================================================
+7. BACKENDS                                           *project-tasks-backends*
+
+Backends define how to detect and interact with different project types.
+Each backend specifies:
+
+• Markers — Files that identify the project type
+• Tasks — Commands for configure, build, run, debug, test, package, clean
+• Variables — Default values for command substitution
+
+Built-in backends: cmake, python
+
+==============================================================================
+8. CMAKE                                                 *project-tasks-cmake*
+
+Markers: `CMakePresets.json`, `CMakeLists.txt`
+
+Tasks:
+• configure — `cmake --preset <preset>` or `cmake -B <build_dir> -S .`
+• build — `cmake --build --preset <preset>`
+• run — Execute selected target
+• debug — Debug with nvim-dap (codelldb by default)
+• test — `ctest --preset <preset>`
+• package — `cmake --build --preset <preset> --target package`
+• clean — Remove build directory
+
+                                                    *project-tasks-cmake-presets*
+CMakePresets Support ~
+
+• Auto-detects `CMakePresets.json` and `CMakeUserPresets.json`
+• Resolves `inherits` chains
+• Expands `${sourceDir}` and `${presetName}` macros
+• Extracts or defaults `binaryDir` for target discovery
+• Projects without `binaryDir` use `build/<presetName>` by default
+
+==============================================================================
+9. PYTHON/UV                                            *project-tasks-python*
+
+Markers: `pyproject.toml`
+
+Tasks:
+• run — `uv run <entry_point>`
+• debug — Launch debugpy, attach with nvim-dap
+• test — `uv run pytest`
+• package — `uv build`
+
+Variables:
+• entry_point — Default: `src/main.py`
+
+==============================================================================
+10. CUSTOM BACKENDS                                     *project-tasks-custom*
+
+Add backends via `.project-tasks.json` or `setup()`:
+
+>json
+    {
+      "backends": {
+        "rust": {
+          "markers": ["Cargo.toml"],
+          "tasks": {
+            "build": { "cmd": ["cargo", "build"] },
+            "run": { "cmd": ["cargo", "run"], "args_passthrough": true },
+            "test": { "cmd": ["cargo", "test"] }
+          }
+        }
+      }
+    }
+<
+                                                   *project-tasks-task-options*
+Task Options ~
+
+    Option          Type      Description ~
+    cmd             string[]  Command to execute
+    fallback_cmd    string[]  Alternative when preset unavailable
+    needs_preset    boolean   Prompt for CMake preset selection
+    needs_target    boolean   Prompt for target selection
+    args_passthrough boolean  Append user args to command
+    use_dap         boolean   Use nvim-dap for execution
+    dap_config      table     nvim-dap configuration
+    env             table     Task-specific environment variables
+
+                                                    *project-tasks-variables*
+Variables ~
+
+Use `${variable}` in commands for substitution:
+
+    Variable        Source ~
+    ${preset}       Selected CMake preset name
+    ${binary_dir}   CMake preset's binaryDir
+    ${target}       Selected target name
+    ${target_path}  Full path to target executable
+    ${build_dir}    Configured build directory
+    ${entry_point}  Python entry point
+
+==============================================================================
+11. DEBUG INTEGRATION                                    *project-tasks-debug*
+
+For debug tasks, install nvim-dap and configure adapters:
+
+>lua
+    local dap = require("dap")
+    dap.adapters.codelldb = {
+      type = "server",
+      port = "${port}",
+      executable = {
+        command = "codelldb",
+        args = { "--port", "${port}" },
+      },
+    }
+<
+
+If nvim-dap is not available, debug tasks fall back to terminal execution.
+
+==============================================================================
+12. API                                                     *project-tasks-api*
+
+                                                   *project-tasks.run_task()*
+run_task({task}, {opts})
+    Run a task by name.
+
+    Parameters: ~
+        {task}  Task name: "configure", "build", "run", "debug", "test",
+                "package", "clean"
+        {opts}  Optional table:
+                • prompt: Force selection prompt
+                • args: Arguments to pass to command
+                • env: Environment variables
+
+    Examples: >lua
+        local pt = require("project-tasks")
+        pt.run_task("build")
+        pt.run_task("run", { prompt = true })
+        pt.run_task("run", { args = { "--verbose" }, env = { DEBUG = "1" } })
+<
+
+==============================================================================
+ vim:tw=78:ts=8:ft=help:norl:

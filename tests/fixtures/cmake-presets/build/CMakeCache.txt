@@ -1,0 +1,3 @@
+# Minimal CMakeCache.txt for testing
+CMAKE_HOME_DIRECTORY:INTERNAL=/project
+CMAKE_BUILD_TYPE:STRING=Debug
