@@ -52,8 +52,11 @@ Using [lazy.nvim](https://github.com/folke/lazy.nvim):
 | `<leader>pT` | test | Run tests (select preset) |
 | `<leader>pp` | package | Package project |
 | `<leader>pP` | package | Package (select preset) |
+| `<leader>pe` | edit | Edit build configuration |
+| `<leader>pE` | edit | Edit build configuration (select) |
 | `<leader>px` | clean | Clean build artifacts |
 | `<leader>pX` | clean | Clean (select preset) |
+| `<leader>pQ` | cancel | Cancel running task |
 | `<leader>pi` | info | Show project info |
 
 Uppercase variants (Shift) force re-selection of target/preset.
@@ -66,7 +69,9 @@ Uppercase variants (Shift) force re-selection of target/preset.
 - `:ProjectDebug` / `:ProjectDebug!`
 - `:ProjectTest` / `:ProjectTest!`
 - `:ProjectPackage` / `:ProjectPackage!`
+- `:ProjectEdit` / `:ProjectEdit!`
 - `:ProjectClean` / `:ProjectClean!`
+- `:ProjectCancel` — Cancel running task
 - `:ProjectInfo` — Show detected backend and available tasks
 
 Use `:help project-tasks` for full documentation.
@@ -158,6 +163,7 @@ Place a `.project-tasks.json` in your project root to:
 - `debug` — Debug with nvim-dap (codelldb by default)
 - `test` — `ctest --preset <preset>`
 - `package` — `cmake --build --preset <preset> --target package`
+- `edit` — Edit `CMakeCache.txt` in selected build directory
 - `clean` — Remove build directory
 
 **CMakePresets Support:**
@@ -175,6 +181,7 @@ Place a `.project-tasks.json` in your project root to:
 - `debug` — Launch debugpy, attach with nvim-dap
 - `test` — `uv run pytest`
 - `package` — `uv build`
+- `edit` — Edit `pyproject.toml`
 
 **Variables:**
 - `entry_point` — Default: `src/main.py`
@@ -212,6 +219,7 @@ Add backends via `.project-tasks.json` or `setup()`:
 |--------|------|-------------|
 | `cmd` | `string[]` | Command to execute |
 | `fallback_cmd` | `string[]` | Alternative command when preset unavailable |
+| `edit_file` | `string` | File to edit (opens in Neovim) |
 | `needs_preset` | `boolean` | Prompt for CMake preset selection |
 | `needs_target` | `boolean` | Prompt for target selection |
 | `args_passthrough` | `boolean` | Append user args to command |
