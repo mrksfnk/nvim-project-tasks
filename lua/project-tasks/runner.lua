@@ -125,6 +125,12 @@ function M.run(task, ctx, terminal_opts)
     return
   end
 
+  -- Handle macOS .app bundles: use 'open' command
+  if cmd[1] and cmd[1]:match("%.app$") then
+    -- Insert 'open' at the beginning for .app bundles
+    table.insert(cmd, 1, "open")
+  end
+
   -- Check for dap integration
   if task.use_dap then
     local ok = M.try_dap(task, ctx, cmd)
