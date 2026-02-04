@@ -172,6 +172,9 @@ function M.try_dap(task, ctx, cmd)
 
   local config = vim.deepcopy(task.dap_config)
 
+  -- Set required name field
+  config.name = ctx.variables.target or ctx.task or "project-tasks debug"
+
   -- Set program path
   if ctx.variables.target_path then
     config.program = ctx.variables.target_path
