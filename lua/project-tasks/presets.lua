@@ -222,10 +222,60 @@ function M.get_targets(root, binary_dir)
   if not index_path then
     -- Try to create query files for next configure
     M.setup_query(binary_dir)
+    -- Fallback: scan for executables in build directory
+    return M.scan_for_executables(binary_dir)
+  end
+
+  local targets = M.parse_codemodel(reply_dir, index_path)
+  -- If no targets from File API, try scanning
+  if not targets or #targets == 0 then
+    return M.scan_for_executables(binary_dir)
+  end
+  return targets
+end
+
+--- Scan build directory for executable files (fallback when File API unavailable)
+---@param binary_dir string
+---@return table|nil
+function M.scan_for_executables(binary_dir)
+  local targets = {}
+
+  -- Check if directory exists
+  if not vim.uv.fs_stat(binary_dir) then
     return nil
   end
 
-  return M.parse_codemodel(reply_dir, index_path)
+  -- On macOS, look for .app bundles first
+  local apps = vim.fn.glob(binary_dir .. "/*.app", false, true)
+  for _, app_path in ipairs(apps) do
+    local name = vim.fn.fnamemodify(app_path, ":t:r")  -- Get name without .app
+    table.insert(targets, {
+      name = name,
+      path = app_path,
+      type = "EXECUTABLE",
+    })
+  end
+
+  -- Also look for regular executables (non-hidden, executable files)
+  local files = vim.fn.readdir(binary_dir)
+  for _, f in ipairs(files) do
+    local path = binary_dir .. "/" .. f
+    local stat = vim.uv.fs_stat(path)
+    -- Check if it's an executable file (not directory, not hidden, has execute permission)
+    if stat and stat.type == "file" and not f:match("^%.") and not f:match("%.") then
+      -- On Unix, check if file is executable
+      local mode = stat.mode
+      if mode and bit.band(mode, 0x49) ~= 0 then  -- 0x49 = 0111 (user/group/other execute)
+        table.insert(targets, {
+          name = f,
+          path = path,
+          type = "EXECUTABLE",
+        })
+      end
+    end
+  end
+
+  return #targets > 0 and targets or nil
 end
 
 --- Find the latest reply index file
