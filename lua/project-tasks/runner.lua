@@ -6,6 +6,9 @@ local M = {}
 M.term_buf = nil
 M.term_win = nil
 
+-- Current running job (for cancellation)
+M.current_job = nil
+
 --- Expand ${var} placeholders in a string
 ---@param str string
 ---@param variables table
@@ -311,13 +314,14 @@ function M.run_to_quickfix(cmd, ctx, opts)
     end)
   end
 
-  vim.system(cmd, {
+  M.current_job = vim.system(cmd, {
     cwd = ctx.root,
     env = ctx.env,
     text = true,
     stdout = append_output,
     stderr = append_output,
   }, function(result)
+    M.current_job = nil
     vim.schedule(function()
       -- Final update with completion status
       local qf_items = { { text = "$ " .. cmd_str }, { text = "" } }
@@ -340,6 +344,28 @@ function M.run_to_quickfix(cmd, ctx, opts)
       end
     end)
   end)
+end
+
+--- Cancel the currently running task
+function M.cancel()
+  -- Cancel quickfix job
+  if M.current_job then
+    M.current_job:kill(15)  -- SIGTERM
+    vim.notify("[project-tasks] Task cancelled", vim.log.levels.WARN)
+    return
+  end
+  
+  -- Cancel terminal job
+  if M.term_buf and vim.api.nvim_buf_is_valid(M.term_buf) then
+    local job_id = vim.b[M.term_buf].terminal_job_id
+    if job_id then
+      vim.fn.chansend(job_id, "\x03")  -- Send Ctrl+C
+      vim.notify("[project-tasks] Task interrupted", vim.log.levels.WARN)
+      return
+    end
+  end
+  
+  vim.notify("[project-tasks] No running task to cancel", vim.log.levels.INFO)
 end
 
 return M

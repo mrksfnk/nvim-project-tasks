@@ -78,6 +78,12 @@ end
 function M.run_task(task_name, opts)
   opts = opts or {}
 
+  -- Special handling for cancel task
+  if task_name == "cancel" then
+    runner.cancel()
+    return
+  end
+
   local root = detect.find_root()
   if not root then
     vim.notify("[project-tasks] No project root found", vim.log.levels.WARN)
@@ -205,6 +211,16 @@ end
 ---@param ctx table
 ---@param opts table
 function M.continue_task(task, ctx, opts)
+  -- Special handling for edit_config task - open file directly in Neovim
+  if task.edit_file then
+    local file_path = runner.expand_var(task.edit_file, ctx.variables)
+    if not vim.startswith(file_path, "/") then
+      file_path = ctx.root .. "/" .. file_path
+    end
+    vim.cmd("edit " .. file_path)
+    return
+  end
+
   -- Merge task-specific env
   if task.env then
     ctx.env = vim.tbl_extend("force", ctx.env, task.env)
@@ -456,6 +472,7 @@ function M.setup_keymaps()
     { key = "t", task = "test", desc = "Test" },
     { key = "p", task = "package", desc = "Package" },
     { key = "x", task = "clean", desc = "Clean" },
+    { key = "e", task = "edit", desc = "Edit Config" },
   }
 
   for _, t in ipairs(tasks) do
@@ -470,6 +487,11 @@ function M.setup_keymaps()
     end, { desc = "Project: " .. t.desc .. " (select)" })
   end
 
+  -- Cancel keymap (no shift variant)
+  vim.keymap.set("n", prefix .. "p", function()
+    M.run_task("cancel")
+  end, { desc = "Project: Cancel" })
+
   -- Info keymap
   vim.keymap.set("n", prefix .. "i", function()
     M.show_info()
@@ -478,7 +500,7 @@ end
 
 --- Setup user commands
 function M.setup_commands()
-  local tasks = { "configure", "build", "run", "debug", "test", "package", "clean" }
+  local tasks = { "configure", "build", "run", "debug", "test", "package", "clean", "edit", "cancel" }
 
   for _, task in ipairs(tasks) do
     local cmd_name = "Project" .. task:sub(1, 1):upper() .. task:sub(2)

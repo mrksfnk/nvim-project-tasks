@@ -51,6 +51,10 @@ M.cmake = {
       needs_preset = true,
       fallback_cmd = { "rm", "-rf", "${build_dir}" },
     },
+    edit = {
+      edit_file = "${binary_dir}/CMakeCache.txt",
+      needs_preset = true,
+    },
   },
 
   variables = {
@@ -83,6 +87,9 @@ M.python = {
     },
     package = {
       cmd = { "uv", "build" },
+    },
+    edit = {
+      edit_file = "pyproject.toml",
     },
   },
 
