@@ -3,6 +3,7 @@
 import os
 import shutil
 import subprocess
+import time
 
 import pytest
 
@@ -360,3 +361,85 @@ class TestPythonUvIntegration:
         # Check for dist directory
         dist_dir = os.path.join(workspace, "dist")
         # uv build might create wheels in dist
+
+
+@pytest.mark.skipif(not cmake_available(), reason="cmake not available")
+class TestCancelTask:
+    """Integration tests for task cancellation."""
+
+    @pytest.fixture
+    def cmake_workspace_quickfix(self, temp_dir):
+        """Create cmake workspace with quickfix mode."""
+        workspace = copy_fixture("cmake-presets", temp_dir)
+        driver = NvimTestDriver(workspace_path=workspace)
+        # Override to use quickfix mode
+        driver.lua("""
+            require('project-tasks').setup({
+                terminal = { mode = 'quickfix' }
+            })
+        """)
+        yield driver, workspace
+        driver.close()
+
+    def test_cancel_configure_task(self, cmake_workspace_quickfix):
+        """Should cancel a running configure task."""
+        nvim, workspace = cmake_workspace_quickfix
+
+        # Set preset
+        nvim.set_preset("debug")
+
+        # Start configure task
+        nvim.run_task("configure")
+
+        # Wait briefly for it to start
+        time.sleep(0.5)
+
+        # Cancel the task
+        nvim.cancel_task()
+
+        # Wait for cancellation to complete
+        time.sleep(0.5)
+
+        # Check quickfix shows cancelled
+        content = nvim.get_quickfix_content()
+        assert "cancelled" in content.lower() or "failed" in content.lower(), \
+            f"Expected cancelled status in quickfix: {content}"
+
+    def test_cancel_build_task(self, cmake_workspace_quickfix):
+        """Should cancel a running build task."""
+        nvim, workspace = cmake_workspace_quickfix
+
+        # First configure (need a successful configure)
+        nvim.set_preset("debug")
+        nvim.run_task("configure")
+        nvim.wait_for_quickfix_content("Configuring done", timeout=30)
+
+        # Set build preset
+        nvim.set_build_preset("debug")
+        nvim.set_build_target("")
+
+        # Start build task
+        nvim.run_task("build")
+
+        # Wait briefly for it to start
+        time.sleep(0.5)
+
+        # Cancel the task
+        nvim.cancel_task()
+
+        # Wait for cancellation to complete
+        time.sleep(0.5)
+
+        # Check quickfix shows cancelled
+        content = nvim.get_quickfix_content()
+        assert "cancelled" in content.lower() or "failed" in content.lower(), \
+            f"Expected cancelled status in quickfix: {content}"
+
+    def test_cancel_no_running_task(self, cmake_workspace_quickfix):
+        """Should handle cancel when no task is running."""
+        nvim, workspace = cmake_workspace_quickfix
+
+        # Cancel with nothing running (should not error)
+        nvim.cancel_task()
+
+        # Just verify no exception was raised

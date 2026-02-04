@@ -8,6 +8,8 @@ M.term_win = nil
 
 -- Current running job (for cancellation)
 M.current_job = nil
+M.current_job_pid = nil
+M.job_cancelled = false
 
 --- Expand ${var} placeholders in a string
 ---@param str string
@@ -198,6 +200,9 @@ function M.run_in_terminal(cmd, ctx, terminal_opts, focus)
   local position = terminal_opts.position or "bottom"
   local size = terminal_opts.size or 15
 
+  -- Reset cancellation flag
+  M.job_cancelled = false
+
   -- Build shell command string
   local cmd_str = table.concat(vim.tbl_map(vim.fn.shellescape, cmd), " ")
 
@@ -290,6 +295,9 @@ function M.run_to_quickfix(cmd, ctx, opts)
   vim.cmd("copen")
   vim.notify(("[project-tasks] Running: %s"):format(cmd_name), vim.log.levels.INFO)
 
+  -- Reset cancellation flag
+  M.job_cancelled = false
+
   -- Collect output lines for streaming to quickfix
   local lines = {}
   local function append_output(err, data)
@@ -322,7 +330,21 @@ function M.run_to_quickfix(cmd, ctx, opts)
     stderr = append_output,
   }, function(result)
     M.current_job = nil
+    M.current_job_pid = nil
     vim.schedule(function()
+      -- Check if job was cancelled
+      if M.job_cancelled then
+        local qf_items = { { text = "$ " .. cmd_str }, { text = "" } }
+        for _, l in ipairs(lines) do
+          table.insert(qf_items, { text = l })
+        end
+        table.insert(qf_items, { text = "" })
+        table.insert(qf_items, { text = ("[✗ %s cancelled]"):format(cmd_name) })
+        vim.fn.setqflist({}, "r", { title = cmd_name .. " ✗", items = qf_items })
+        vim.cmd("cbottom")
+        return
+      end
+      
       -- Final update with completion status
       local qf_items = { { text = "$ " .. cmd_str }, { text = "" } }
       for _, l in ipairs(lines) do
@@ -344,28 +366,68 @@ function M.run_to_quickfix(cmd, ctx, opts)
       end
     end)
   end)
+  
+  -- Store pid for cancellation (vim.system returns SystemObj with pid field)
+  M.current_job_pid = M.current_job.pid
+end
+
+--- Recursively get all descendant process IDs
+---@param pid number
+---@return table
+local function get_all_descendants(pid)
+  local descendants = {}
+  local children = vim.api.nvim_get_proc_children(pid)
+  for _, child_pid in ipairs(children) do
+    table.insert(descendants, child_pid)
+    -- Recursively get grandchildren
+    local grandchildren = get_all_descendants(child_pid)
+    for _, gc_pid in ipairs(grandchildren) do
+      table.insert(descendants, gc_pid)
+    end
+  end
+  return descendants
 end
 
 --- Cancel the currently running task
 function M.cancel()
-  -- Cancel quickfix job
+  local cancelled = false
+  
+  -- Cancel quickfix job (vim.system)
   if M.current_job then
-    M.current_job:kill(15)  -- SIGTERM
-    vim.notify("[project-tasks] Task cancelled", vim.log.levels.WARN)
-    return
+    M.job_cancelled = true
+    
+    -- Get all descendant processes and kill them (deepest first)
+    if M.current_job_pid then
+      local descendants = get_all_descendants(M.current_job_pid)
+      -- Kill in reverse order (deepest children first)
+      for i = #descendants, 1, -1 do
+        pcall(vim.uv.kill, descendants[i], 9)  -- SIGKILL
+      end
+    end
+    -- Kill the main job
+    pcall(function() M.current_job:kill(9) end)
+    cancelled = true
   end
   
   -- Cancel terminal job
   if M.term_buf and vim.api.nvim_buf_is_valid(M.term_buf) then
-    local job_id = vim.b[M.term_buf].terminal_job_id
-    if job_id then
-      vim.fn.chansend(job_id, "\x03")  -- Send Ctrl+C
-      vim.notify("[project-tasks] Task interrupted", vim.log.levels.WARN)
-      return
+    local ok, main_pid = pcall(vim.api.nvim_buf_get_var, M.term_buf, "terminal_job_pid")
+    if ok and main_pid then
+      -- Get all descendant processes and kill them (deepest first)
+      local descendants = get_all_descendants(main_pid)
+      -- Kill in reverse order (deepest children first)
+      for i = #descendants, 1, -1 do
+        pcall(vim.uv.kill, descendants[i], 9)  -- SIGKILL
+      end
+      cancelled = true
     end
   end
   
-  vim.notify("[project-tasks] No running task to cancel", vim.log.levels.INFO)
+  if cancelled then
+    vim.notify("[project-tasks] Task cancelled", vim.log.levels.WARN)
+  else
+    vim.notify("[project-tasks] No running task to cancel", vim.log.levels.INFO)
+  end
 end
 
 return M

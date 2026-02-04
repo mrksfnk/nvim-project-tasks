@@ -309,6 +309,49 @@ class NvimTestDriver:
         """
         )
 
+    def cancel_task(self) -> None:
+        """Cancel the currently running task."""
+        self.lua("require('project-tasks').run_task('cancel')")
+
+    def get_quickfix_content(self) -> str:
+        """Get content of the quickfix list."""
+        items = self.nvim.call("getqflist")
+        return "\n".join(item.get("text", "") for item in items)
+
+    def wait_for_quickfix_content(
+        self,
+        pattern: str,
+        timeout: Optional[float] = None,
+    ) -> bool:
+        """Wait for quickfix list to contain pattern.
+
+        Args:
+            pattern: String to search for.
+            timeout: Max wait time in seconds.
+
+        Returns:
+            True if pattern found, False if timeout.
+        """
+        timeout = timeout or self.timeout
+        start = time.time()
+
+        while time.time() - start < timeout:
+            content = self.get_quickfix_content()
+            if pattern in content:
+                return True
+            time.sleep(0.1)
+
+        return False
+
+    def is_task_running(self) -> bool:
+        """Check if a task is currently running."""
+        return self.lua(
+            """
+            local runner = require('project-tasks.runner')
+            return runner.current_job ~= nil
+        """
+        )
+
     def close(self) -> None:
         """Shutdown nvim and cleanup."""
         try:
