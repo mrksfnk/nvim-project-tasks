@@ -487,8 +487,8 @@ function M.setup_keymaps()
     end, { desc = "Project: " .. t.desc .. " (select)" })
   end
 
-  -- Cancel keymap (no shift variant, Q for "quit")
-  vim.keymap.set("n", prefix .. "Q", function()
+	-- Cancel keymap (no shift variant, q for "quit")
+	vim.keymap.set("n", prefix .. "q", function()
     M.run_task("cancel")
   end, { desc = "Project: Cancel" })
 

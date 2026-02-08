@@ -56,7 +56,7 @@ Using [lazy.nvim](https://github.com/folke/lazy.nvim):
 | `<leader>pE` | edit | Edit build configuration (select) |
 | `<leader>px` | clean | Clean build artifacts |
 | `<leader>pX` | clean | Clean (select preset) |
-| `<leader>pQ` | cancel | Cancel running task |
+| `<leader>pq` | cancel | Cancel running task |
 | `<leader>pi` | info | Show project info |
 
 Uppercase variants (Shift) force re-selection of target/preset.
