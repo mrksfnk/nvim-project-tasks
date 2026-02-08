@@ -34,28 +34,12 @@ end
 ---@return string|nil backend_name
 ---@return table|nil backend
 function M.get_backend(root, backends)
-	-- Priority order: more specific markers first
-	local priority = {
-		"cmake", -- CMakePresets.json, CMakeLists.txt
-		"python", -- pyproject.toml
-		"zig", -- build.zig
-	}
-
-	-- Check priority backends first
-	for _, name in ipairs(priority) do
-		local backend = backends[name]
-		if backend and M.matches_markers(root, backend.markers) then
-			return name, backend
-		end
-	end
-
-	-- Check remaining backends
+	-- Check backends
 	for name, backend in pairs(backends) do
 		if backend.markers and M.matches_markers(root, backend.markers) then
 			return name, backend
 		end
 	end
-
 	return nil, nil
 end
 
