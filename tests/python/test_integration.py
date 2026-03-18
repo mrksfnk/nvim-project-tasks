@@ -3,6 +3,7 @@
 import os
 import shutil
 import subprocess
+import sys
 import time
 
 import pytest
@@ -67,6 +68,52 @@ class TestCMakeIntegration:
         assert os.path.isfile(
             os.path.join(build_dir, "CMakeCache.txt")
         ), "CMakeCache.txt not created"
+
+    def test_compile_commands_symlink_created(self, cmake_workspace):
+        """Should create a project-root compile_commands.json pointing to the active build dir."""
+        nvim, workspace = cmake_workspace
+        nvim.set_preset("debug")
+        nvim.run_task("configure")
+        nvim.wait_for_terminal_content("Configuring done", timeout=30)
+
+        build_dir = os.path.join(workspace, "build", "debug")
+        cache_path = os.path.join(build_dir, "CMakeCache.txt")
+
+        # Wait for configure to complete (CMakeCache should be created)
+        deadline = time.time() + 30
+        while time.time() < deadline and not os.path.isfile(cache_path):
+            time.sleep(0.1)
+        assert os.path.isfile(cache_path), "CMakeCache.txt not created"
+
+        compile_path = os.path.join(build_dir, "compile_commands.json")
+        # Some generators (e.g. Xcode) may not emit compile_commands.json even if
+        # the option is enabled. Create a minimal file ourselves so we can
+        # validate the plugin's symlink behavior.
+        if not os.path.isfile(compile_path):
+            with open(compile_path, "w") as f:
+                f.write("[]")
+
+        root_link = os.path.join(workspace, "compile_commands.json")
+
+        # Wait for plugin to create the symlink
+        deadline = time.time() + 20
+        while time.time() < deadline and not os.path.exists(root_link):
+            time.sleep(0.1)
+
+        if sys.platform == "win32":
+            assert os.path.isfile(root_link), "compile_commands.json copy missing"
+            assert not os.path.islink(root_link), "compile_commands.json should be a copy on Windows"
+            with open(root_link, "r") as root_f:
+                root_content = root_f.read()
+            with open(compile_path, "r") as build_f:
+                build_content = build_f.read()
+            assert root_content == build_content
+        else:
+            assert os.path.islink(root_link), "compile_commands.json is not a symlink"
+            target = os.readlink(root_link)
+            if not os.path.isabs(target):
+                target = os.path.join(workspace, target)
+            assert os.path.realpath(target) == os.path.realpath(compile_path)
 
     def test_build_with_preset(self, cmake_workspace):
         """Should build project with CMake preset."""

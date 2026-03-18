@@ -263,6 +263,8 @@ function M.ensure_preset_loaded(ctx, callback)
 			if p.name == last then
 				ctx.variables.preset = p.name
 				ctx.variables.binary_dir = p.binaryDir or ctx.variables.build_dir or "build"
+				-- Keep compile_commands pointer in sync for the active build directory
+				require("project-tasks.presets").sync_compile_commands_link(ctx.root, ctx.variables.binary_dir)
 				callback()
 				return
 			end
@@ -274,6 +276,8 @@ function M.ensure_preset_loaded(ctx, callback)
 		if preset then
 			ctx.variables.preset = preset.name
 			ctx.variables.binary_dir = preset.binaryDir or ctx.variables.build_dir or "build"
+			-- Keep compile_commands pointer in sync for the selected preset
+			require("project-tasks.presets").sync_compile_commands_link(ctx.root, ctx.variables.binary_dir)
 		else
 			-- User cancelled or no preset - use fallback build dir
 			ctx.variables.binary_dir = ctx.variables.binary_dir or ctx.variables.build_dir or "build"

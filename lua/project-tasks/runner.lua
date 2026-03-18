@@ -11,6 +11,9 @@ M.current_job = nil
 M.current_job_pid = nil
 M.job_cancelled = false
 
+-- Timer for watching CMake configure/generate completion
+M.cmake_config_timer = nil
+
 --- Expand ${var} placeholders in a string
 ---@param str string
 ---@param variables table
@@ -91,7 +94,77 @@ function M.is_cmake_configured(root, binary_dir)
 		build_path = root .. "/" .. binary_dir
 	end
 	local cache_path = build_path .. "/CMakeCache.txt"
-	return vim.uv.fs_stat(cache_path) ~= nil
+	local configured = vim.uv.fs_stat(cache_path) ~= nil
+	if configured then
+		-- Ensure compile_commands pointer is updated when the build dir is configured
+		local presets = require("project-tasks.presets")
+		presets.sync_compile_commands_link(root, binary_dir)
+	end
+	return configured
+end
+
+local function stop_cmake_config_timer()
+	if M.cmake_config_timer then
+		M.cmake_config_timer:stop()
+		M.cmake_config_timer:close()
+		M.cmake_config_timer = nil
+	end
+end
+
+local function should_watch_cmake_config(ctx)
+	return ctx
+		and ctx.backend == "cmake"
+		and ctx.task == "configure"
+		and ctx.variables
+		and ctx.variables.binary_dir
+		and ctx.variables.binary_dir ~= ""
+end
+
+local function start_cmake_config_timer(ctx)
+	stop_cmake_config_timer()
+	if not should_watch_cmake_config(ctx) then
+		return
+	end
+	local presets = require("project-tasks.presets")
+	local root = ctx.root
+	local binary_dir = ctx.variables.binary_dir
+	if not binary_dir or binary_dir == "" then
+		return
+	end
+
+	local checks = 0
+	local max_checks = 120 -- ~60s
+	local timer = vim.uv.new_timer()
+	timer:start(500, 500, vim.schedule_wrap(function()
+		checks = checks + 1
+		if checks > max_checks then
+			stop_cmake_config_timer()
+			return
+		end
+
+		local build_dir = binary_dir
+		if not vim.startswith(build_dir, "/") then
+			build_dir = root .. "/" .. build_dir
+		end
+
+		-- Wait for the build directory to be configured (CMakeCache created)
+		local cache_path = build_dir .. "/CMakeCache.txt"
+		if not vim.uv.fs_stat(cache_path) then
+			return
+		end
+
+		-- If export isn't enabled, stop watching
+		if not presets.is_compile_commands_exported(root, binary_dir) then
+			stop_cmake_config_timer()
+			return
+		end
+
+		if vim.uv.fs_stat(build_dir .. "/compile_commands.json") then
+			presets.sync_compile_commands_link(root, binary_dir)
+			stop_cmake_config_timer()
+		end
+	end))
+	M.cmake_config_timer = timer
 end
 
 --- Run a task in the terminal
@@ -99,6 +172,9 @@ end
 ---@param ctx table
 ---@param terminal_opts table
 function M.run(task, ctx, terminal_opts)
+	-- Ensure any previous configure watcher is stopped before starting a new task
+	stop_cmake_config_timer()
+
 	-- Validate required variables for build tasks
 	if task.needs_build_preset and not ctx.variables.build_preset then
 		-- Using fallback, need binary_dir
@@ -212,6 +288,11 @@ function M.run_in_terminal(cmd, ctx, terminal_opts, focus)
 	-- Reset cancellation flag
 	M.job_cancelled = false
 
+	-- Watch for CMake configure/generate completion so we can sync compile_commands.json
+	if should_watch_cmake_config(ctx) then
+		start_cmake_config_timer(ctx)
+	end
+
 	-- Build shell command string
 	local cmd_str = table.concat(vim.tbl_map(vim.fn.shellescape, cmd), " ")
 
@@ -296,6 +377,11 @@ function M.run_to_quickfix(cmd, ctx, opts)
 	local cmd_name = cmd[1] or "command"
 	local cmd_str = table.concat(cmd, " ")
 
+	-- Watch for CMake configure/generate completion
+	if should_watch_cmake_config(ctx) then
+		start_cmake_config_timer(ctx)
+	end
+
 	-- Immediately show quickfix with "Running..." status
 	vim.fn.setqflist({}, "r", {
 		title = cmd_name .. " (running...)",
@@ -341,6 +427,13 @@ function M.run_to_quickfix(cmd, ctx, opts)
 		M.current_job = nil
 		M.current_job_pid = nil
 		vim.schedule(function()
+			if should_watch_cmake_config(ctx) then
+				-- Quickfix mode has explicit process completion, so sync here in scheduled context.
+				local presets = require("project-tasks.presets")
+				presets.sync_compile_commands_link(ctx.root, ctx.variables.binary_dir)
+				stop_cmake_config_timer()
+			end
+
 			-- Check if job was cancelled
 			if M.job_cancelled then
 				local qf_items = { { text = "$ " .. cmd_str }, { text = "" } }
@@ -402,6 +495,8 @@ end
 
 --- Cancel the currently running task
 function M.cancel()
+	-- Stop any pending configure watcher
+	stop_cmake_config_timer()
 	local cancelled = false
 
 	-- Cancel quickfix job (vim.system)

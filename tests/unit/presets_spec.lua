@@ -184,4 +184,45 @@ describe("presets", function()
       assert.same({}, result)
     end)
   end)
+
+  describe("compile_commands sync", function()
+    it("detects CMAKE_EXPORT_COMPILE_COMMANDS from CMakeCache.txt", function()
+      local root = helpers.tmpdir()
+      local build_dir = root .. "/build/debug"
+      vim.fn.mkdir(build_dir, "p")
+
+      vim.fn.writefile({ "CMAKE_EXPORT_COMPILE_COMMANDS:BOOL=ON" }, build_dir .. "/CMakeCache.txt")
+
+      local enabled = presets.is_compile_commands_exported(root, "build/debug")
+      assert.is_true(enabled)
+
+      vim.fn.system({ "rm", "-rf", root })
+    end)
+
+    it("creates project-root compile_commands pointer for active preset build dir", function()
+      local root = helpers.tmpdir()
+      local build_dir = root .. "/build/debug"
+      vim.fn.mkdir(build_dir, "p")
+
+      vim.fn.writefile({ "CMAKE_EXPORT_COMPILE_COMMANDS:BOOL=ON" }, build_dir .. "/CMakeCache.txt")
+      vim.fn.writefile({ "[]" }, build_dir .. "/compile_commands.json")
+
+      presets.sync_compile_commands_link(root, "build/debug")
+
+      local link_path = root .. "/compile_commands.json"
+      local uname = vim.uv.os_uname()
+      if uname and uname.sysname == "Windows_NT" then
+        assert.is_true(vim.uv.fs_stat(link_path) ~= nil)
+        local root_content = vim.fn.readfile(link_path)
+        local build_content = vim.fn.readfile(build_dir .. "/compile_commands.json")
+        assert.same(build_content, root_content)
+      else
+        local st = vim.uv.fs_lstat(link_path)
+        assert.is_not_nil(st)
+        assert.equals("link", st.type)
+      end
+
+      vim.fn.system({ "rm", "-rf", root })
+    end)
+  end)
 end)

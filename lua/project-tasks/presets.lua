@@ -408,4 +408,233 @@ function M.setup_query(binary_dir)
 	end
 end
 
+--- Normalize binary_dir to an absolute path
+---@param root string
+---@param binary_dir string
+---@return string|nil
+function M.resolve_binary_dir(root, binary_dir)
+	if not binary_dir or binary_dir == "" then
+		return nil
+	end
+	if vim.startswith(binary_dir, "/") then
+		return binary_dir
+	end
+	return root .. "/" .. binary_dir
+end
+
+local function is_windows()
+	local uname = vim.uv.os_uname()
+	return uname and uname.sysname == "Windows_NT"
+end
+
+local function is_truthy(val)
+	if type(val) == "boolean" then
+		return val
+	end
+	if type(val) ~= "string" then
+		return false
+	end
+	local v = val:upper()
+	return v == "ON" or v == "1" or v == "TRUE" or v == "YES"
+end
+
+--- Find the latest File API cache reply file
+---@param binary_dir string
+---@return string|nil
+function M.find_latest_cache_reply(binary_dir)
+	local reply_dir = binary_dir .. "/.cmake/api/v1/reply"
+	local stat = vim.uv.fs_stat(reply_dir)
+	if not stat then
+		return nil
+	end
+
+	local files = vim.fn.readdir(reply_dir)
+	local latest = nil
+	for _, f in ipairs(files) do
+		if f:match("^cache%-.*%.json$") then
+			if not latest or f > latest then
+				latest = f
+			end
+		end
+	end
+
+	return latest and (reply_dir .. "/" .. latest)
+end
+
+--- Determine whether CMAKE_EXPORT_COMPILE_COMMANDS is enabled
+---@param root string
+---@param binary_dir string
+---@return boolean
+function M.is_compile_commands_exported(root, binary_dir)
+	local bdir = M.resolve_binary_dir(root, binary_dir)
+	if not bdir then
+		return false
+	end
+
+	-- Prefer File API cache data if available
+	local cache_path = M.find_latest_cache_reply(bdir)
+	if cache_path then
+		local content = vim.fn.readfile(cache_path)
+		local ok, data = pcall(vim.json.decode, table.concat(content, "\n"))
+		if ok and data and data.entries then
+			for _, entry in ipairs(data.entries) do
+				if entry.key == "CMAKE_EXPORT_COMPILE_COMMANDS" then
+					return is_truthy(entry.value)
+				end
+			end
+		end
+	end
+
+	-- Fallback to CMakeCache.txt parsing
+	local cache_txt = bdir .. "/CMakeCache.txt"
+	if vim.uv.fs_stat(cache_txt) then
+		for _, line in ipairs(vim.fn.readfile(cache_txt)) do
+			local key, value = line:match("^([^:#=]+):[^=]*=(.*)$")
+			if key == "CMAKE_EXPORT_COMPILE_COMMANDS" then
+				return is_truthy(value)
+			end
+		end
+	end
+
+	return false
+end
+
+local function read_file(path)
+	local f = io.open(path, "rb")
+	if not f then
+		return nil
+	end
+	local data = f:read("*a")
+	f:close()
+	return data
+end
+
+local function write_file(path, data)
+	local f = io.open(path, "wb")
+	if not f then
+		return false
+	end
+	f:write(data)
+	f:close()
+	return true
+end
+
+local function remove_file(path)
+	-- Ignore errors if file doesn't exist
+	pcall(vim.uv.fs_unlink, path)
+end
+
+local function read_marker(marker_path)
+	local data = read_file(marker_path)
+	if not data then
+		return nil
+	end
+	return data:gsub("%s+$", "")
+end
+
+local function write_marker(marker_path, target)
+	write_file(marker_path, tostring(target))
+end
+
+local function is_symlink(path)
+	local stat = vim.uv.fs_lstat(path)
+	return stat and stat.type == "link"
+end
+
+local function ensure_symlink(link, target, marker_path)
+	-- If link already exists and points to the correct target, nothing to do
+	if is_symlink(link) then
+		local current = vim.uv.fs_readlink(link)
+		if current == target then
+			write_marker(marker_path, target)
+			return true
+		end
+		-- Remove outdated symlink
+		remove_file(link)
+	end
+
+	-- If a regular file exists and we didn't create it, don't overwrite
+	if vim.uv.fs_stat(link) then
+		local existing_marker = read_marker(marker_path)
+		if not existing_marker then
+			return false
+		end
+		remove_file(link)
+	end
+
+	-- Create symlink
+	local ok, result = pcall(vim.uv.fs_symlink, target, link)
+	if not ok or not result then
+		return false
+	end
+	write_marker(marker_path, target)
+	return true
+end
+
+local function copy_file(src, dst)
+	local data = read_file(src)
+	if not data then
+		return false
+	end
+	return write_file(dst, data)
+end
+
+local function ensure_copy(link, target, marker_path)
+	local marker = read_marker(marker_path)
+	if vim.uv.fs_stat(link) and not marker then
+		-- Do not overwrite a user-provided file
+		return false
+	end
+
+	if not copy_file(target, link) then
+		return false
+	end
+	write_marker(marker_path, target)
+	return true
+end
+
+local function remove_link_and_marker(link, marker_path)
+	-- Only remove if we previously managed it
+	local marker = read_marker(marker_path)
+	if not marker then
+		return false
+	end
+
+	-- Remove link if it exists (file or symlink)
+	if vim.uv.fs_stat(link) then
+		remove_file(link)
+	end
+	remove_file(marker_path)
+	return true
+end
+
+--- Synchronize project-root compile_commands.json pointer
+--- Creates a symlink (Unix) or copy (Windows) to the build directory file
+---@param root string
+---@param binary_dir string
+function M.sync_compile_commands_link(root, binary_dir)
+	local bdir = M.resolve_binary_dir(root, binary_dir)
+	if not bdir then
+		return
+	end
+
+	local link_path = root .. "/compile_commands.json"
+	local marker_path = root .. "/.project_tasks_compile_commands"
+
+	local export_enabled = M.is_compile_commands_exported(root, binary_dir)
+	local target_path = bdir .. "/compile_commands.json"
+
+	-- If export is disabled or the target is missing, remove any existing link/copy we created.
+	if not export_enabled or not vim.uv.fs_stat(target_path) then
+		remove_link_and_marker(link_path, marker_path)
+		return
+	end
+
+	if is_windows() then
+		ensure_copy(link_path, target_path, marker_path)
+	else
+		ensure_symlink(link_path, target_path, marker_path)
+	end
+end
+
 return M
