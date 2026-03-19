@@ -8,7 +8,7 @@ Minimal, extensible project task runner for Neovim. Run configure, build, run, d
 - **CMakePresets.json** — Full support with inheritance resolution and auto-merge of `CMakeUserPresets.json`
 - **CMake File API** — Automatic target discovery from build artifacts
 - **Async execution** — Non-blocking tasks via `vim.system()`
-- **Session memory** — Remembers last selected target/preset per project
+- **Session memory** — Remembers last selected target/preset per project (build targets are scoped per preset)
 - **nvim-dap integration** — Optional debug adapter support
 - **~500 lines of code** — Simple, readable, hackable
 
@@ -171,6 +171,15 @@ Place a `.project-tasks.json` in your project root to:
 - Resolves `inherits` chains
 - Expands `${sourceDir}` and `${presetName}` macros
 - Extracts `binaryDir` for target discovery
+- Resolves build preset inheritance and `configurePreset` linkage
+
+**Build Target Selection:**
+- If a build preset defines `targets`, those are used automatically
+- Otherwise, build target selection uses CMake File API target discovery
+- Target choice is remembered per session and preset context
+- Preset-context changes invalidate stale remembered targets automatically
+- Shift keymaps / `:ProjectBuild!` always prompt for build target selection
+- If no targets can be discovered, manual target input is offered (`empty = all targets`)
 
 ### Python/uv
 

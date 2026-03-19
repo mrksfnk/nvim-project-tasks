@@ -72,6 +72,48 @@ function M.set(root, key, value)
   M.save()
 end
 
+--- Get scoped build target selection for a project/preset scope
+---@param root string Project root path
+---@param scope string Scope key (e.g., build preset name)
+---@return string|nil value
+---@return string|nil signature
+function M.get_build_target(root, scope)
+  local data = M.load()
+  local project = data[root]
+  if not project or type(project.build_targets) ~= "table" then
+    return nil, nil
+  end
+
+  local entry = project.build_targets[scope]
+  if type(entry) ~= "table" then
+    return nil, nil
+  end
+
+  return entry.value, entry.signature
+end
+
+--- Set scoped build target selection for a project/preset scope
+---@param root string Project root path
+---@param scope string Scope key (e.g., build preset name)
+---@param value string Target value ("" = all targets)
+---@param signature string Signature for change detection
+function M.set_build_target(root, scope, value, signature)
+  local data = M.load()
+  if not data[root] then
+    data[root] = {}
+  end
+
+  if type(data[root].build_targets) ~= "table" then
+    data[root].build_targets = {}
+  end
+
+  data[root].build_targets[scope] = {
+    value = value,
+    signature = signature,
+  }
+  M.save()
+end
+
 --- Clear all data for a project
 ---@param root string Project root path
 function M.clear(root)

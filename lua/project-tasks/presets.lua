@@ -88,16 +88,29 @@ function M.get_build_presets(root, configure_preset_name)
 	end
 
 	local build_presets = {}
+	local build_presets_map = {}
 
+	-- Merge by name first (user presets override base presets).
 	for _, data in ipairs({ cached.base, cached.user }) do
 		if data and data.buildPresets then
 			for _, bp in ipairs(data.buildPresets) do
-				if not configure_preset_name or bp.configurePreset == configure_preset_name then
-					table.insert(build_presets, bp)
-				end
+				build_presets_map[bp.name] = bp
 			end
 		end
 	end
+
+	for _, bp in pairs(build_presets_map) do
+		if not bp.hidden then
+			local resolved = M.resolve_inheritance(bp, build_presets_map, {})
+			if not configure_preset_name or resolved.configurePreset == configure_preset_name then
+				table.insert(build_presets, resolved)
+			end
+		end
+	end
+
+	table.sort(build_presets, function(a, b)
+		return a.name < b.name
+	end)
 
 	return build_presets
 end

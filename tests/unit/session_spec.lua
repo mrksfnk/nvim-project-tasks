@@ -89,4 +89,39 @@ describe("session", function()
       assert.equals("app2", session.get("/project2", "target"))
     end)
   end)
+
+  describe("build target scopes", function()
+    it("stores scoped build targets", function()
+      session.set_build_target("/project", "build_preset:debug|preset:debug", "my_app", "sig-1")
+
+      local value, signature = session.get_build_target("/project", "build_preset:debug|preset:debug")
+      assert.equals("my_app", value)
+      assert.equals("sig-1", signature)
+    end)
+
+    it("isolates scoped build targets per scope", function()
+      session.set_build_target("/project", "build_preset:debug|preset:debug", "debug_app", "sig-debug")
+      session.set_build_target("/project", "build_preset:release|preset:release", "release_app", "sig-release")
+
+      local debug_value = session.get_build_target("/project", "build_preset:debug|preset:debug")
+      local release_value = session.get_build_target("/project", "build_preset:release|preset:release")
+
+      assert.equals("debug_app", debug_value)
+      assert.equals("release_app", release_value)
+    end)
+
+    it("returns nil when scoped value is missing", function()
+      local value, signature = session.get_build_target("/project", "missing")
+      assert.is_nil(value)
+      assert.is_nil(signature)
+    end)
+
+    it("clears scoped values when project is cleared", function()
+      session.set_build_target("/project", "build_preset:debug|preset:debug", "app", "sig")
+      session.clear("/project")
+
+      local value = session.get_build_target("/project", "build_preset:debug|preset:debug")
+      assert.is_nil(value)
+    end)
+  end)
 end)

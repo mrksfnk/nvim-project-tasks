@@ -32,6 +32,7 @@ Features:
 • CMake File API — Automatic target discovery
 • Async execution — Non-blocking tasks via vim.system()
 • Session memory — Remembers last selected target/preset per project
+  (build targets are scoped per preset)
 • nvim-dap integration — Optional debug adapter support
 
 ==============================================================================
@@ -166,6 +167,17 @@ CMakePresets Support ~
 • Expands `${sourceDir}` and `${presetName}` macros
 • Extracts or defaults `binaryDir` for target discovery
 • Projects without `binaryDir` use `build/<presetName>` by default
+• Resolves build preset inheritance and `configurePreset` linkage
+
+Build Target Selection ~
+
+• If a build preset defines `targets`, those are used automatically
+• Otherwise, build target selection uses CMake File API target discovery
+• Target choice is remembered per session and preset context
+• Preset-context changes invalidate stale remembered targets
+• Shift keymaps / `:ProjectBuild!` always prompt for build target selection
+• If no targets can be discovered, manual target input is offered
+  (`empty = all targets`)
 
 ==============================================================================
 9. PYTHON/UV                                            *project-tasks-python*

@@ -183,6 +183,35 @@ describe("presets", function()
       local result = presets.get_build_presets(fixture)
       assert.same({}, result)
     end)
+
+    it("resolves inherited build preset fields", function()
+      local root = "/tmp/fake-cmake-project"
+      presets._cache[root] = {
+        base = {
+          buildPresets = {
+            { name = "base-build", hidden = true, configurePreset = "debug", targets = { "app" } },
+            { name = "debug-build", inherits = "base-build" },
+          },
+        },
+      }
+
+      local result = presets.get_build_presets(root)
+      assert.is_true(#result >= 1)
+
+      local debug_build = nil
+      for _, bp in ipairs(result) do
+        if bp.name == "debug-build" then
+          debug_build = bp
+          break
+        end
+      end
+
+      assert.is_not_nil(debug_build)
+      assert.equals("debug", debug_build.configurePreset)
+      assert.same({ "app" }, debug_build.targets)
+
+      presets._cache[root] = nil
+    end)
   end)
 
   describe("compile_commands sync", function()

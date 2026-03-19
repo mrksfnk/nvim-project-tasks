@@ -72,6 +72,90 @@ function M.load_project_config()
 	M.config.project = data
 end
 
+--- Apply configure preset data to context variables.
+---@param ctx table
+---@param configure_preset string|nil
+function M.apply_configure_preset_context(ctx, configure_preset)
+	if not configure_preset then
+		return
+	end
+
+	local presets_mod = require("project-tasks.presets")
+	local presets = presets_mod.load(ctx.root) or {}
+	for _, p in ipairs(presets) do
+		if p.name == configure_preset then
+			ctx.variables.preset = p.name
+			ctx.variables.configure_preset = p.name
+			ctx.variables.binary_dir = p.binaryDir or ctx.variables.build_dir or "build"
+			presets_mod.sync_compile_commands_link(ctx.root, ctx.variables.binary_dir)
+			return
+		end
+	end
+
+	ctx.variables.preset = configure_preset
+	ctx.variables.configure_preset = configure_preset
+	ctx.variables.binary_dir = ctx.variables.binary_dir or ctx.variables.build_dir or "build"
+end
+
+--- Build target scope key for session persistence.
+---@param ctx table
+---@return string
+function M.get_build_target_scope(ctx)
+	if ctx.variables.build_preset and ctx.variables.preset then
+		return ("build_preset:%s|preset:%s"):format(ctx.variables.build_preset, ctx.variables.preset)
+	end
+
+	if ctx.variables.build_preset then
+		return "build_preset:" .. ctx.variables.build_preset
+	end
+
+	if ctx.variables.preset then
+		return "preset:" .. ctx.variables.preset
+	end
+
+	return "binary_dir:" .. (ctx.variables.binary_dir or ctx.variables.build_dir or "build")
+end
+
+--- Signature used to invalidate stale remembered build targets.
+---@param ctx table
+---@return string
+function M.get_build_target_signature(ctx)
+	local payload = {
+		build_preset = ctx.variables.build_preset,
+		configure_preset = ctx.variables.preset,
+		binary_dir = ctx.variables.binary_dir,
+	}
+
+	local ok, json = pcall(vim.json.encode, payload)
+	if not ok then
+		return ""
+	end
+
+	return vim.fn.sha256(json)
+end
+
+--- Convert build preset targets into cmake --target args.
+---@param build_preset table
+---@return string|nil
+function M.get_target_arg_from_build_preset(build_preset)
+	if not build_preset or type(build_preset.targets) ~= "table" or #build_preset.targets == 0 then
+		return nil
+	end
+
+	local parts = {}
+	for _, target in ipairs(build_preset.targets) do
+		if type(target) == "string" and target ~= "" then
+			table.insert(parts, "--target " .. target)
+		end
+	end
+
+	if #parts == 0 then
+		return nil
+	end
+
+	return table.concat(parts, " ")
+end
+
 --- Run a task by name
 ---@param task_name string
 ---@param opts table|nil { prompt = bool, args = table, env = table }
@@ -143,35 +227,49 @@ function M.run_task(task_name, opts)
 	-- Handle build preset selection (separate from configure presets)
 	if task.needs_build_preset then
 		local presets_mod = require("project-tasks.presets")
-		M.ensure_preset_loaded(ctx, function()
-			if presets_mod.has_build_preset(ctx.root) then
-				-- Has build presets, use build preset selection
-				M.select_build_preset(ctx, opts.prompt, function(build_preset)
-					if build_preset then
-						ctx.variables.build_preset = build_preset.name
-						-- Allow target selection when building with preset
-						if task.supports_build_target and opts.prompt then
-							M.select_build_target(ctx, function(target)
-								if target and target ~= "" then
-									ctx.variables.target_arg = "--target " .. target
-								else
-									ctx.variables.target_arg = ""
-								end
-								M.continue_task(task, ctx, opts)
-							end)
-						else
-							ctx.variables.target_arg = ""
-							M.continue_task(task, ctx, opts)
-						end
-					elseif task.fallback_cmd then
-						-- No build preset selected but task has fallback
+		if presets_mod.has_build_preset(ctx.root) then
+			-- Has build presets, use build preset selection first.
+			M.select_build_preset(ctx, opts.prompt, function(build_preset)
+				if not build_preset then
+					if task.fallback_cmd then
 						M.continue_task(task, ctx, opts)
 					end
+					return
+				end
+
+				ctx.variables.build_preset = build_preset.name
+				if build_preset.configurePreset then
+					M.apply_configure_preset_context(ctx, build_preset.configurePreset)
+				end
+
+				if not task.supports_build_target then
+					ctx.variables.target_arg = ""
+					M.continue_task(task, ctx, opts)
+					return
+				end
+
+				-- If build preset already defines targets, use them unless user forces selection.
+				local preset_target_arg = M.get_target_arg_from_build_preset(build_preset)
+				if preset_target_arg and not opts.prompt then
+					ctx.variables.target_arg = preset_target_arg
+					M.continue_task(task, ctx, opts)
+					return
+				end
+
+				M.select_build_target(ctx, { force_prompt = opts.prompt }, function(target)
+					if target and target ~= "" then
+						ctx.variables.target_arg = "--target " .. target
+					else
+						ctx.variables.target_arg = ""
+					end
+					M.continue_task(task, ctx, opts)
 				end)
-			elseif task.fallback_cmd then
-				-- No build presets defined, use fallback with optional target selection
+			end)
+		elseif task.fallback_cmd then
+			-- No build presets defined, use fallback with optional target selection.
+			M.ensure_preset_loaded(ctx, function()
 				if task.supports_build_target then
-					M.select_build_target(ctx, function(target)
+					M.select_build_target(ctx, { force_prompt = opts.prompt }, function(target)
 						if target and target ~= "" then
 							ctx.variables.target_arg = "--target " .. target
 						else
@@ -183,8 +281,8 @@ function M.run_task(task_name, opts)
 					ctx.variables.target_arg = ""
 					M.continue_task(task, ctx, opts)
 				end
-			end
-		end)
+			end)
+		end
 		return
 	end
 
@@ -361,41 +459,65 @@ function M.select_build_preset(ctx, force_prompt, callback)
 	end)
 end
 
---- Select a build target (for cmake --build ... --target)
---- Uses CMake File API targets for discovery
+--- Select a build target (for cmake --build ... --target).
+--- Uses CMake File API targets for discovery with manual input fallback.
 ---@param ctx table
----@param callback function
-function M.select_build_target(ctx, callback)
+---@param opts table|function|nil
+---@param callback function|nil
+function M.select_build_target(ctx, opts, callback)
+	if type(opts) == "function" then
+		callback = opts
+		opts = {}
+	end
+	opts = opts or {}
+
 	local presets_mod = require("project-tasks.presets")
 	local targets = presets_mod.get_targets(ctx.root, ctx.variables.binary_dir)
+	local discovered_count = targets and #targets or 0
+	local force_prompt = opts.force_prompt == true
+	local scope = M.get_build_target_scope(ctx)
+	local signature = M.get_build_target_signature(ctx)
 
-	-- Add option for "all" (default, empty)
-	local choices = { { name = "(all targets)", value = "" } }
+	-- Add option for "all" (default, empty) and manual input fallback.
+	local choices = {
+		{ name = "(all targets)", value = "" },
+	}
 	if targets and #targets > 0 then
 		for _, t in ipairs(targets) do
 			table.insert(choices, { name = t.name, value = t.name })
 		end
 	end
+	table.insert(choices, { name = "(custom target...)", value = "__custom__" })
 
-	-- Check session for last selection (nil means not set, empty string means "all")
-	local last = session.get(ctx.root, "build_target")
-	if last ~= nil then
+	local last, last_signature = session.get_build_target(ctx.root, scope)
+	if last == nil then
+		-- Backward-compatible migration from old flat key.
+		last = session.get(ctx.root, "build_target")
+		last_signature = nil
+	end
+
+	if last ~= nil and last_signature and last_signature ~= signature then
+		last = nil
+	end
+
+	if last ~= nil and not force_prompt then
 		-- If it's empty string, it means "all targets" - always valid
 		if last == "" then
+			session.set_build_target(ctx.root, scope, last, signature)
 			callback(last)
 			return
 		end
-		-- For specific target names, check if in choices OR just use it directly
-		-- (allows manually set targets even before File API discovery)
+		-- For specific target names, check if in discovered choices.
 		for _, c in ipairs(choices) do
 			if c.value == last then
+				session.set_build_target(ctx.root, scope, last, signature)
 				callback(last)
 				return
 			end
 		end
-		-- Not in choices but user explicitly set it - trust them
-		if #choices <= 1 then
-			-- No targets discovered yet, use the session value directly
+		-- If no targets discovered, keep remembered value.
+		if discovered_count == 0 then
+			session.set_build_target(ctx.root, scope, last, signature)
 			callback(last)
 			return
 		end
@@ -407,12 +529,25 @@ function M.select_build_target(ctx, callback)
 			return c.name
 		end,
 	}, function(choice)
-		if choice then
-			session.set(ctx.root, "build_target", choice.value)
-			callback(choice.value)
-		else
+		if not choice then
 			callback("")
+			return
 		end
+
+		if choice.value ~= "__custom__" then
+			session.set_build_target(ctx.root, scope, choice.value, signature)
+			callback(choice.value)
+			return
+		end
+
+		vim.ui.input({
+			prompt = "Custom build target (empty = all): ",
+			default = last or "",
+		}, function(input)
+			local value = input or ""
+			session.set_build_target(ctx.root, scope, value, signature)
+			callback(value)
+		end)
 	end)
 end
 
